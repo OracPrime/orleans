@@ -50,7 +50,7 @@ namespace UnitTests.General
         [Fact, TestCategory("BVT"), TestCategory("Identifiers")]
         public void UniqueKeyToByteArrayWithoutKeyExt()
         {
-            var key = UniqueKey.NewKey(Guid.NewGuid(), category: UniqueKey.Category.GeoClient);
+            var key = UniqueKey.NewKey(Guid.NewGuid(), category: UniqueKey.Category.Client);
 
             var result = key.ToByteArray();
 
@@ -492,11 +492,6 @@ namespace UnitTests.General
 
             GrainId observerGrainId = GrainId.NewClientId();
             grainRef = GrainReference.NewObserverGrainReference(observerGrainId, GuidId.GetNewGuidId(), this.environment.RuntimeClient.GrainReferenceRuntime);
-            this.environment.GrainFactory.BindGrainReference(grainRef);
-            TestGrainReference(grainRef);
-
-            GrainId geoObserverGrainId = GrainId.NewClientId("clusterid");
-            grainRef = GrainReference.NewObserverGrainReference(geoObserverGrainId, GuidId.GetNewGuidId(), this.environment.RuntimeClient.GrainReferenceRuntime);
             this.environment.GrainFactory.BindGrainReference(grainRef);
             TestGrainReference(grainRef);
         }

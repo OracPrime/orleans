@@ -538,9 +538,38 @@ namespace Orleans.Clustering.DynamoDB
             };
         }
 
-        public Task CleanupDefunctSiloEntries(DateTimeOffset beforeDate)
+        public async Task CleanupDefunctSiloEntries(DateTimeOffset beforeDate)
         {
-            throw new NotImplementedException();
+            try
+            {
+                var keys = new Dictionary<string, AttributeValue>
+                {
+                    { $":{SiloInstanceRecord.DEPLOYMENT_ID_PROPERTY_NAME}", new AttributeValue(this.clusterId) },
+                };
+                var filter = $"{SiloInstanceRecord.DEPLOYMENT_ID_PROPERTY_NAME} = :{SiloInstanceRecord.DEPLOYMENT_ID_PROPERTY_NAME}";
+                
+                var records = await this.storage.QueryAllAsync(this.options.TableName, keys, filter, item => new SiloInstanceRecord(item));
+                var defunctRecordKeys = records.Where(r => SiloIsDefunct(r, beforeDate)).Select(r => r.GetKeys());
+
+                var tasks = new List<Task>();
+                foreach (var batch in defunctRecordKeys.BatchIEnumerable(MAX_BATCH_SIZE))
+                {
+                    tasks.Add(this.storage.DeleteEntriesAsync(this.options.TableName, batch));
+                }
+                await Task.WhenAll(tasks);
+            }
+            catch (Exception exc)
+            {
+                this.logger.Error(ErrorCode.MembershipBase, $"Unable to clean up defunct membership records on table {this.options.TableName} for clusterId {this.clusterId}", exc);
+                throw;
+            }
+        }
+
+        private static bool SiloIsDefunct(SiloInstanceRecord silo, DateTimeOffset beforeDate)
+        {
+            return DateTimeOffset.TryParse(silo.IAmAliveTime, out var iAmAliveTime)
+                    && iAmAliveTime < beforeDate
+                    && silo.Status == (int)SiloStatus.Dead;
         }
     }
 }

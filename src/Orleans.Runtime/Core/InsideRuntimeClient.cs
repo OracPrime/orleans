@@ -104,10 +104,7 @@ namespace Orleans.Runtime
         }
 
         public IServiceProvider ServiceProvider { get; }
-
-        /// <inheritdoc />
-        public ClientInvokeCallback ClientInvokeCallback { get; set; }
-
+        
         public IStreamProviderRuntime CurrentStreamProviderRuntime { get; internal set; }
 
         public OrleansTaskScheduler Scheduler { get; }
@@ -134,9 +131,8 @@ namespace Orleans.Runtime
             GrainReference target,
             InvokeMethodRequest request,
             TaskCompletionSource<object> context,
-            string debugContext,
             InvokeMethodOptions options,
-            string genericArguments = null)
+            string genericArguments)
         {
             var message = this.messageFactory.CreateMessage(request, options);
 
@@ -146,10 +142,9 @@ namespace Orleans.Runtime
             if (!String.IsNullOrEmpty(genericArguments))
                 message.GenericGrainType = genericArguments;
 
-            SchedulingContext schedulingContext = RuntimeContext.CurrentActivationContext as SchedulingContext;
+            IGrainContext sendingActivation = RuntimeContext.CurrentGrainContext;
 
-            ActivationData sendingActivation = null;
-            if (schedulingContext == null)
+            if (sendingActivation == null)
             {
                 var clientAddress = this.HostedClient.ClientAddress;
                 message.SendingGrain = clientAddress.Grain;
@@ -157,26 +152,8 @@ namespace Orleans.Runtime
             }
             else
             {
-                switch (schedulingContext.ContextType)
-                {
-                    case SchedulingContextType.SystemThread:
-                        throw new ArgumentException(
-                            String.Format(
-                                "Trying to send a message {0} on a silo not from within grain and not from within system target (RuntimeContext is of SchedulingContextType.SystemThread type)",
-                                message),
-                            "context");
-
-                    case SchedulingContextType.Activation:
-                        message.SendingActivation = schedulingContext.Activation.ActivationId;
-                        message.SendingGrain = schedulingContext.Activation.Grain;
-                        sendingActivation = schedulingContext.Activation;
-                        break;
-
-                    case SchedulingContextType.SystemTarget:
-                        message.SendingActivation = schedulingContext.SystemTarget.ActivationId;
-                        message.SendingGrain = ((ISystemTargetBase) schedulingContext.SystemTarget).GrainId;
-                        break;
-                }
+                message.SendingActivation = sendingActivation.ActivationId;
+                message.SendingGrain = sendingActivation.GrainId;
             }
 
             // fill in destination
@@ -200,11 +177,6 @@ namespace Orleans.Runtime
             if (target.IsObserverReference)
             {
                 message.TargetObserverId = target.ObserverId;
-            }
-
-            if (debugContext != null)
-            {
-                message.DebugContext = debugContext;
             }
 
             var oneWay = (options & InvokeMethodOptions.OneWay) != 0;
@@ -316,7 +288,7 @@ namespace Orleans.Runtime
                 RequestContextExtensions.Import(message.RequestContextData);
                 if (schedulingOptions.PerformDeadlockDetection && !message.TargetGrain.IsSystemTarget)
                 {
-                    UpdateDeadlockInfoInRequestContext(new RequestInvocationHistory(message.TargetGrain, message.TargetActivation, message.DebugContext));
+                    UpdateDeadlockInfoInRequestContext(new RequestInvocationHistory(message.TargetGrain, message.TargetActivation));
                     // RequestContext is automatically saved in the msg upon send and propagated to the next hop
                     // in RuntimeClient.CreateMessage -> RequestContextExtensions.ExportToMessage(message);
                 }
@@ -493,13 +465,13 @@ namespace Orleans.Runtime
             }
             finally
             {
-                TransactionContext.Clear();
+                RequestContext.Clear();
             }
         }
 
         private bool TryInstallExtension(int interfaceId, IInvokable invokable, string genericGrainType, ref IGrainMethodInvoker invoker)
         {
-            IGrainExtension extension = TryGetCurrentActivationData(out ActivationData activationData)
+            IGrainExtension extension = RuntimeContext.CurrentGrainContext is ActivationData activationData
                 ? activationData.ActivationServices.GetServiceByKey<int, IGrainExtension>(interfaceId)
                 : this.ServiceProvider.GetServiceByKey<int, IGrainExtension>(interfaceId);
 
@@ -675,16 +647,7 @@ namespace Orleans.Runtime
             }
         }
 
-        public string CurrentActivationIdentity
-        {
-            get
-            {
-                if (RuntimeContext.Current == null) return this.HostedClient.ToString();
-
-                var currentActivation = this.GetCurrentActivationData();
-                return currentActivation.Address.ToString();
-            }
-        }
+        public string CurrentActivationIdentity => RuntimeContext.CurrentGrainContext?.Address.ToString() ?? this.HostedClient.ToString();
 
         public void Reset(bool cleanup)
         {
@@ -698,13 +661,13 @@ namespace Orleans.Runtime
 
         public GrainReference CreateObjectReference(IAddressable obj, IGrainMethodInvoker invoker)
         {
-            if (RuntimeContext.Current == null) return this.HostedClient.CreateObjectReference(obj, invoker);
+            if (RuntimeContext.CurrentGrainContext is null) return this.HostedClient.CreateObjectReference(obj, invoker);
             throw new InvalidOperationException("Cannot create a local object reference from a grain.");
         }
 
         public void DeleteObjectReference(IAddressable obj)
         {
-            if (RuntimeContext.Current == null)
+            if (RuntimeContext.CurrentGrainContext is null)
             {
                 this.HostedClient.DeleteObjectReference(obj);
             }
@@ -773,16 +736,19 @@ namespace Orleans.Runtime
 
         public StreamDirectory GetStreamDirectory()
         {
-            if (RuntimeContext.Current == null) return this.HostedClient.StreamDirectory;
-            var currentActivation = GetCurrentActivationData();
-            return currentActivation.GetStreamDirectory();
+            if (RuntimeContext.CurrentGrainContext is ActivationData activation)
+            {
+                return activation.GetStreamDirectory();
+            }
+
+            return this.HostedClient.StreamDirectory;
         }
 
         public Task<Tuple<TExtension, TExtensionInterface>> BindExtension<TExtension, TExtensionInterface>(Func<TExtension> newExtensionFunc)
             where TExtension : IGrainExtension
             where TExtensionInterface : IGrainExtension
         {
-            if (RuntimeContext.Current == null)
+            if (RuntimeContext.CurrentGrainContext is null)
             {
                 return this.HostedClient.BindExtension<TExtension, TExtensionInterface>(newExtensionFunc);
             }
@@ -794,7 +760,7 @@ namespace Orleans.Runtime
                     throw new OrleansException("Failed to register " + typeof(TExtension).Name);
             }
 
-            IAddressable currentGrain = (RuntimeContext.CurrentActivationContext as SchedulingContext)?.Activation.GrainInstance;
+            IAddressable currentGrain = RuntimeContext.CurrentGrainContext?.GrainInstance;
             var currentTypedGrain = currentGrain.AsReference<TExtensionInterface>();
 
             return Task.FromResult(Tuple.Create(extension, currentTypedGrain));
@@ -831,29 +797,12 @@ namespace Orleans.Runtime
 
         private ExtensionInvoker GetCurrentExtensionInvoker()
         {
-            var context = RuntimeContext.CurrentActivationContext;
-            return (context.ContextType == SchedulingContextType.SystemTarget)
-                ? (context as SchedulingContext)?.SystemTarget.ExtensionInvoker
-                : GetCurrentActivationData(context).ExtensionInvoker;
-        }
-
-        private ActivationData GetCurrentActivationData(ISchedulingContext context = null)
-        {
-            context = context ?? RuntimeContext.CurrentActivationContext;
-            if (TryGetCurrentActivationData(context, out ActivationData activationData)) return activationData;
-            return ThrowInvalidOperationException();
-            ActivationData ThrowInvalidOperationException() => throw new InvalidOperationException("Attempting to GetCurrentActivationData when not in an activation scope");
-        }
-
-        private bool TryGetCurrentActivationData(out ActivationData activationData)
-        {
-            return TryGetCurrentActivationData(RuntimeContext.CurrentActivationContext, out activationData);
-        }
-
-        private bool TryGetCurrentActivationData(ISchedulingContext context, out ActivationData activationData)
-        {
-            activationData = (context as SchedulingContext)?.Activation;
-            return (activationData != null);
+            return RuntimeContext.CurrentGrainContext switch
+            {
+                SystemTarget systemTarget => systemTarget.ExtensionInvoker,
+                ActivationData activation => activation.ExtensionInvoker,
+                _ => throw new InvalidOperationException("Attempting to GetCurrentExtensionInvoker when not in an activation scope")
+            };
         }
 
         internal static IGrainExtensionMethodInvoker TryGetExtensionMethodInvoker(GrainTypeManager typeManager, Type handlerType)

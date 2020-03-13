@@ -31,15 +31,13 @@ namespace Orleans
         private InvokableObjectManager localObjects;
 
         private ClientMessageCenter transport;
-        private bool firstMessageReceived;
         private bool disposing;
 
         private ClientProviderRuntime clientProviderRuntime;
 
         internal readonly ClientStatisticsManager ClientStatistics;
         private readonly MessagingTrace messagingTrace;
-        private GrainId clientId;
-        private readonly GrainId handshakeClientId;
+        private readonly GrainId clientId;
         private ThreadTrackingStatistic incomingMessagesThreadTimeTracking;
 
         private readonly TimeSpan typeMapRefreshInterval;
@@ -100,7 +98,7 @@ namespace Orleans
             this.ClientStatistics = clientStatisticsManager;
             this.messagingTrace = messagingTrace;
             this.logger = loggerFactory.CreateLogger<OutsideRuntimeClient>();
-            this.handshakeClientId = GrainId.NewClientId();
+            this.clientId = GrainId.NewClientId();
             callbacks = new ConcurrentDictionary<CorrelationId, CallbackData>();
             this.clientMessagingOptions = clientMessagingOptions.Value;
             this.typeMapRefreshInterval = typeManagementOptions.Value.TypeMapRefreshInterval;
@@ -117,8 +115,6 @@ namespace Orleans
         {
             try
             {
-                AppDomain.CurrentDomain.DomainUnload += CurrentDomain_DomainUnload;
-
                 this.ServiceProvider = services;
 
                 var connectionLostHandlers = this.ServiceProvider.GetServices<ConnectionToClusterLostHandler>();
@@ -131,12 +127,6 @@ namespace Orleans
                 foreach (var handler in gatewayCountChangedHandlers)
                 {
                     this.GatewayCountChanged += handler;
-                }
-
-                var clientInvokeCallbacks = this.ServiceProvider.GetServices<ClientInvokeCallback>();
-                foreach (var handler in clientInvokeCallbacks)
-                {
-                    this.ClientInvokeCallback += handler;
                 }
 
                 this.InternalGrainFactory = this.ServiceProvider.GetRequiredService<IInternalGrainFactory>();
@@ -165,7 +155,7 @@ namespace Orleans
                 // Client init / sign-on message
                 logger.Info(ErrorCode.ClientInitializing, string.Format(
                     "{0} Initializing OutsideRuntimeClient on {1} at {2} Client Id = {3} {0}",
-                    BARS, Dns.GetHostName(), localAddress, handshakeClientId));
+                    BARS, Dns.GetHostName(), localAddress,  clientId));
                 string startMsg = string.Format("{0} Starting OutsideRuntimeClient with runtime Version='{1}' in AppDomain={2}",
                     BARS, RuntimeVersion.Current, PrintAppDomainDetails());
                 logger.Info(ErrorCode.ClientStarting, startMsg);
@@ -205,7 +195,7 @@ namespace Orleans
             // This helps to avoid any issues (such as deadlocks) caused by executing with the client's synchronization context/scheduler.
             await Task.Run(() => this.StartInternal(retryFilter)).ConfigureAwait(false);
 
-            logger.Info(ErrorCode.ProxyClient_StartDone, "{0} Started OutsideRuntimeClient with Global Client ID: {1}", BARS, CurrentActivationAddress.ToString() + ", client GUID ID: " + handshakeClientId);
+            logger.Info(ErrorCode.ProxyClient_StartDone, "{0} Started OutsideRuntimeClient with Global Client ID: {1}", BARS, CurrentActivationAddress.ToString() + ", client GUID ID: " + clientId);
         }
         
         // used for testing to (carefully!) allow two clients in the same process
@@ -234,13 +224,10 @@ namespace Orleans
                 retryFilter);
 
             var generation = -SiloAddress.AllocateNewGeneration(); // Client generations are negative
-            transport = ActivatorUtilities.CreateInstance<ClientMessageCenter>(this.ServiceProvider, localAddress, generation, handshakeClientId);
-            transport.RegisterLocalMessageHandler(Message.Categories.Application, this.HandleMessage);
+            transport = ActivatorUtilities.CreateInstance<ClientMessageCenter>(this.ServiceProvider, localAddress, generation, clientId);
+            transport.RegisterLocalMessageHandler(this.HandleMessage);
             transport.Start();
-            CurrentActivationAddress = ActivationAddress.NewActivationAddress(transport.MyAddress, handshakeClientId);
-
-            // Keeping this thread handling it very simple for now. Just queue task on thread pool.
-            Task.Run(this.RunClientMessagePump).Ignore();
+            CurrentActivationAddress = ActivationAddress.NewActivationAddress(transport.MyAddress, clientId);
 
             await ExecuteWithRetries(
                 async () => this.GrainTypeResolver = await transport.GetGrainTypeResolver(this.InternalGrainFactory),
@@ -287,58 +274,8 @@ namespace Orleans
             }
         }
 
-        private async Task RunClientMessagePump()
-        {
-            incomingMessagesThreadTimeTracking?.OnStartExecution();
-
-            var reader = transport.GetReader(Message.Categories.Application);
-
-            while (true)
-            {
-                try
-                {
-                    var moreTask = reader.WaitToReadAsync();
-                    var more = moreTask.IsCompletedSuccessfully ? moreTask.Result : await moreTask.ConfigureAwait(false);
-                    if (!more)
-                    {
-                        incomingMessagesThreadTimeTracking?.OnStopExecution();
-                        return;
-                    }
-
-                    // Continue reading if there're more messages
-                    while (reader.TryRead(out var message))
-                    {
-                        if (message == null) continue;
-                        this.HandleMessage(message);
-                    }
-                }
-                catch (Exception exception)
-                {
-                    this.logger.Error(ErrorCode.Runtime_Error_100326, "RunClientMessagePump has thrown exception. Continuing.", exception);
-                }
-            }
-        }
-
         private void HandleMessage(Message message)
         {
-            // when we receive the first message, we update the
-            // clientId for this client because it may have been modified to
-            // include the cluster name
-            if (!firstMessageReceived)
-            {
-                firstMessageReceived = true;
-                if (!handshakeClientId.Equals(message.TargetGrain))
-                {
-                    clientId = message.TargetGrain;
-                    transport.UpdateClientId(clientId);
-                    CurrentActivationAddress = ActivationAddress.GetAddress(transport.MyAddress, clientId, CurrentActivationAddress.Activation);
-                }
-                else
-                {
-                    clientId = handshakeClientId;
-                }
-            }
-
             switch (message.Direction)
             {
                 case Message.Directions.Response:
@@ -369,14 +306,14 @@ namespace Orleans
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Reliability", "CA2000:Dispose objects before losing scope",
             Justification = "CallbackData is IDisposable but instances exist beyond lifetime of this method so cannot Dispose yet.")]
-        public void SendRequest(GrainReference target, InvokeMethodRequest request, TaskCompletionSource<object> context, string debugContext = null, InvokeMethodOptions options = InvokeMethodOptions.None, string genericArguments = null)
+        public void SendRequest(GrainReference target, InvokeMethodRequest request, TaskCompletionSource<object> context, InvokeMethodOptions options, string genericArguments)
         {
             var message = this.messageFactory.CreateMessage(request, options);
             OrleansOutsideRuntimeClientEvent.Log.SendRequest(message);
-            SendRequestMessage(target, message, context, debugContext, options, genericArguments);
+            SendRequestMessage(target, message, context, options, genericArguments);
         }
 
-        private void SendRequestMessage(GrainReference target, Message message, TaskCompletionSource<object> context, string debugContext = null, InvokeMethodOptions options = InvokeMethodOptions.None, string genericArguments = null)
+        private void SendRequestMessage(GrainReference target, Message message, TaskCompletionSource<object> context, InvokeMethodOptions options, string genericArguments)
         {
             var targetGrainId = target.GrainId;
             var oneWay = (options & InvokeMethodOptions.OneWay) != 0;
@@ -401,10 +338,6 @@ namespace Orleans
                 message.TargetObserverId = target.ObserverId;
             }
 
-            if (debugContext != null)
-            {
-                message.DebugContext = debugContext;
-            }
             if (message.IsExpirableMessage(this.clientMessagingOptions.DropExpiredMessages))
             {
                 // don't set expiration for system target messages.
@@ -515,11 +448,6 @@ namespace Orleans
             
             try
             {
-                AppDomain.CurrentDomain.DomainUnload -= CurrentDomain_DomainUnload;
-            }
-            catch (Exception) { }
-            try
-            {
                 if (clientProviderRuntime != null)
                 {
                     clientProviderRuntime.Reset().WaitWithThrow(ResetTimeout);
@@ -562,19 +490,6 @@ namespace Orleans
                 throw new ArgumentException("Reference is not associated with a local object.", "reference");
         }
 
-        private void CurrentDomain_DomainUnload(object sender, EventArgs e)
-        {
-            try
-            {
-                logger.Warn(ErrorCode.ProxyClient_AppDomain_Unload,
-                    $"Current AppDomain={PrintAppDomainDetails()} is unloading.");
-            }
-            catch (Exception)
-            {
-                // just ignore, make sure not to throw from here.
-            }
-        }
-
         private string PrintAppDomainDetails()
         {
             return string.Format("<AppDomain.Id={0}, AppDomain.FriendlyName={1}>", AppDomain.CurrentDomain.Id, AppDomain.CurrentDomain.FriendlyName);
@@ -605,7 +520,6 @@ namespace Orleans
 
             Utils.SafeExecute(() => this.ClusterConnectionLost = null);
             Utils.SafeExecute(() => this.GatewayCountChanged = null);
-            Utils.SafeExecute(() => this.ClientInvokeCallback = null);
 
             this.ServiceProvider = null;
             GC.SuppressFinalize(this);
@@ -623,9 +537,6 @@ namespace Orleans
                 }
             }
         }
-
-        /// <inheritdoc />
-        public ClientInvokeCallback ClientInvokeCallback { get; set; }
         
         /// <inheritdoc />
         public event ConnectionToClusterLostHandler ClusterConnectionLost;

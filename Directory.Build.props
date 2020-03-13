@@ -50,6 +50,8 @@
     <SystemConfigurationConfigurationManagerVersion>4.7.0</SystemConfigurationConfigurationManagerVersion>
     <SystemCollectionsImmutableVersion>1.7.0</SystemCollectionsImmutableVersion>
     <SystemRuntimeCompilerServicesUnsafeVersion>4.7.0</SystemRuntimeCompilerServicesUnsafeVersion>
+    <SystemManagementVersion>4.7.0</SystemManagementVersion>
+    <SystemDiagnosticsPerformanceCounterVersion>4.7.0</SystemDiagnosticsPerformanceCounterVersion>
     <SystemNetHttpVersion>4.3.4</SystemNetHttpVersion>
     <SystemNetNameResolutionVersion>4.3.0</SystemNetNameResolutionVersion>
     <SystemReflectionMetadataVersion>1.8.0</SystemReflectionMetadataVersion>
@@ -64,6 +66,7 @@
     <SystemCodeDomVersion>4.7.0</SystemCodeDomVersion>
     <SystemSecurityPermissionsVersion>4.7.0</SystemSecurityPermissionsVersion>
     <SystemDiagnosticsDiagnosticsSourceVersion>4.7.0</SystemDiagnosticsDiagnosticsSourceVersion>
+    <SystemSecurityCryptographyVersion>4.7.0</SystemSecurityCryptographyVersion>
 
     <!-- Microsoft packages -->
     <MicrosoftBuildVersion>16.4.0</MicrosoftBuildVersion>
@@ -80,6 +83,7 @@
     <MicrosoftExtensionsDependencyInjectionVersion>3.0.0</MicrosoftExtensionsDependencyInjectionVersion>
     <MicrosoftExtensionsDependencyModelVersion>3.0.0</MicrosoftExtensionsDependencyModelVersion>
     <MicrosoftExtensionsLoggingVersion>3.0.0</MicrosoftExtensionsLoggingVersion>
+    <MicrosoftExtensionsObjectPoolVersion>3.0.0</MicrosoftExtensionsObjectPoolVersion>
     <MicrosoftExtensionsOptionsConfigurationExtensionsVersion>3.0.0</MicrosoftExtensionsOptionsConfigurationExtensionsVersion>
     <MicrosoftExtensionsOptionsVersion>3.0.0</MicrosoftExtensionsOptionsVersion>
     <MicrosoftExtensionsHostingAbstractionsVersion>3.0.0</MicrosoftExtensionsHostingAbstractionsVersion>

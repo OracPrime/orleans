@@ -13,7 +13,6 @@ namespace Orleans.Runtime.Messaging
     {
         internal static readonly object ServicesKey = new object();
         private readonly ILocalSiloDetails localSiloDetails;
-        private readonly IOptions<MultiClusterOptions> multiClusterOptions;
         private readonly MessageCenter messageCenter;
         private readonly ConnectionCommon connectionShared;
         private readonly EndpointOptions endpointOptions;
@@ -26,9 +25,7 @@ namespace Orleans.Runtime.Messaging
             IOptions<ConnectionOptions> connectionOptions,
             IOptions<SiloConnectionOptions> siloConnectionOptions,
             OverloadDetector overloadDetector,
-            Gateway gateway,
             ILocalSiloDetails localSiloDetails,
-            IOptions<MultiClusterOptions> multiClusterOptions,
             IOptions<EndpointOptions> endpointOptions,
             MessageCenter messageCenter,
             ConnectionManager connectionManager,
@@ -37,9 +34,8 @@ namespace Orleans.Runtime.Messaging
         {
             this.siloConnectionOptions = siloConnectionOptions.Value;
             this.overloadDetector = overloadDetector;
-            this.gateway = gateway;
+            this.gateway = messageCenter.Gateway;
             this.localSiloDetails = localSiloDetails;
-            this.multiClusterOptions = multiClusterOptions;
             this.messageCenter = messageCenter;
             this.connectionShared = connectionShared;
             this.endpointOptions = endpointOptions.Value;
@@ -55,7 +51,6 @@ namespace Orleans.Runtime.Messaging
                 this.gateway,
                 this.overloadDetector,
                 this.localSiloDetails,
-                this.multiClusterOptions,
                 this.ConnectionOptions,
                 this.messageCenter,
                 this.connectionShared);

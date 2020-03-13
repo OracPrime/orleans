@@ -43,7 +43,6 @@ namespace Orleans.Runtime
             ActivationAddress addr,
             string genericArguments,
             PlacementStrategy placedUsing,
-            IMultiClusterRegistrationStrategy registrationStrategy,
             IActivationCollector collector,
             TimeSpan ageLimit,
             IOptions<SiloMessagingOptions> messagingOptions,
@@ -65,7 +64,6 @@ namespace Orleans.Runtime
             Address = addr;
             State = ActivationState.Create;
             PlacedUsing = placedUsing;
-            RegistrationStrategy = registrationStrategy;
             if (!Grain.IsSystemTarget)
             {
                 this.collector = collector;
@@ -73,15 +71,16 @@ namespace Orleans.Runtime
 
             CollectionAgeLimit = ageLimit;
 
-            GrainReference = GrainReference.FromGrainId(addr.Grain, runtimeClient.GrainReferenceRuntime, genericArguments, Grain.IsSystemTarget ? addr.Silo : null);
-            this.SchedulingContext = new SchedulingContext(this);
+            this.GrainReference = GrainReference.FromGrainId(addr.Grain, runtimeClient.GrainReferenceRuntime, genericArguments, Grain.IsSystemTarget ? addr.Silo : null);
         }
 
         public Type GrainType => GrainTypeData.Type;
 
-        public IGrainIdentity GrainIdentity => this.Identity;
+        public IGrainIdentity GrainIdentity => this.GrainId;
 
         public IServiceProvider ActivationServices => this.serviceScope.ServiceProvider;
+
+        internal WorkItemGroup WorkItemGroup { get; set; }
 
         private ExtensionInvoker extensionInvoker;
         internal ExtensionInvoker ExtensionInvoker
@@ -114,20 +113,6 @@ namespace Orleans.Runtime
         }
 
         public HashSet<ActivationId> RunningRequestsSenders { get; } = new HashSet<ActivationId>();
-
-        public ISchedulingContext SchedulingContext { get; }
-
-        public string GrainTypeName
-        {
-            get
-            {
-                if (GrainInstanceType == null)
-                {
-                    throw new ArgumentNullException("GrainInstanceType", "GrainInstanceType has not been set.");
-                }
-                return GrainInstanceType.FullName;
-            }
-        }
 
         internal Type GrainInstanceType => GrainTypeData?.Type;
 
@@ -188,12 +173,7 @@ namespace Orleans.Runtime
             await streamDirectory.Cleanup(true, false);
         }
 
-        GrainReference IActivationData.GrainReference
-        {
-            get { return GrainReference; }
-        }
-        
-        public GrainId Identity
+        public GrainId GrainId
         {
             get { return Grain; }
         }
@@ -201,6 +181,8 @@ namespace Orleans.Runtime
         public GrainTypeData GrainTypeData { get; private set; }
 
         public Grain GrainInstance { get; private set; }
+
+        IAddressable IGrainContext.GrainInstance => this.GrainInstance;
 
         public ActivationId ActivationId { get { return Address.Activation; } }
 
@@ -221,7 +203,7 @@ namespace Orleans.Runtime
             AddTimer(timer);
         }
 
-        internal readonly GrainReference GrainReference;
+        public GrainReference GrainReference { get; }
 
         public SiloAddress Silo { get { return Address.Silo;  } }
 
@@ -293,8 +275,6 @@ namespace Orleans.Runtime
         }
 
         public PlacementStrategy PlacedUsing { get; private set; }
-
-        public IMultiClusterRegistrationStrategy RegistrationStrategy { get; private set; }
 
         // Currently, the only supported multi-activation grain is one using the StatelessWorkerPlacement strategy.
         internal bool IsStatelessWorker => this.PlacedUsing is StatelessWorkerPlacement;
@@ -700,7 +680,7 @@ namespace Orleans.Runtime
             return String.Format("[Activation: {0}{1}{2}{3} State={4}]",
                  Silo,
                  Grain,
-                 ActivationId,
+                 this.ActivationId,
                  GetActivationInfoString(),
                  State);
         }
@@ -712,7 +692,7 @@ namespace Orleans.Runtime
                     "[Activation: {0}{1}{2}{3} State={4} NonReentrancyQueueSize={5} EnqueuedOnDispatcher={6} InFlightCount={7} NumRunning={8} IdlenessTimeSpan={9} CollectionAgeLimit={10}{11}]",
                     Silo.ToLongString(),
                     Grain.ToDetailedString(),
-                    ActivationId,
+                    this.ActivationId,
                     GetActivationInfoString(),
                     State,                          // 4
                     WaitingCount,                   // 5 NonReentrancyQueueSize
@@ -731,7 +711,7 @@ namespace Orleans.Runtime
                 return String.Format("[Activation: {0}{1}{2}{3}]",
                      Silo,
                      Grain,
-                     ActivationId,
+                     this.ActivationId,
                      GetActivationInfoString());
             }
         }
@@ -759,6 +739,8 @@ namespace Orleans.Runtime
             if (disposable != null) disposable.Dispose();
             this.serviceScope = null;
         }
+
+        bool IEquatable<IGrainContext>.Equals(IGrainContext other) => ReferenceEquals(this, other);
     }
 
     internal static class StreamResourceTestControl

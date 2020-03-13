@@ -109,7 +109,7 @@ namespace Orleans.Runtime.GrainDirectory
                                         localDirectory.MyAddress,
                                         captureChunk,
                                         captureIsFullCopy),
-                                localDirectory.RemoteGrainDirectory.SchedulingContext);
+                                localDirectory.RemoteGrainDirectory);
                     lastPromise[captureSilo] = task;
                     tasks.Add(task);
                 }
@@ -157,7 +157,6 @@ namespace Orleans.Runtime.GrainDirectory
                     duplicates = directoryPartitionsMap[predecessor].Merge(directoryPartitionsMap[removedSilo]);
                 }
 
-                localDirectory.GsiActivationMaintainer.TrackDoubtfulGrains(directoryPartitionsMap[removedSilo].GetItems());
                 if (logger.IsEnabled(LogLevel.Debug)) logger.Debug("Removed copied partition of silo " + removedSilo);
                 directoryPartitionsMap.Remove(removedSilo);
                 DestroyDuplicateActivations(duplicates);
@@ -422,8 +421,6 @@ namespace Orleans.Runtime.GrainDirectory
                 {
                     directoryPartitionsMap[source].Update(partition);
                 }
-
-                localDirectory.GsiActivationMaintainer.TrackDoubtfulGrains(partition);
             }
         }
 
@@ -452,7 +449,7 @@ namespace Orleans.Runtime.GrainDirectory
             silosHoldingMyPartition.Remove(silo);
             localDirectory.Scheduler.QueueTask(() =>
                 localDirectory.GetDirectoryReference(silo).RemoveHandoffPartition(localDirectory.MyAddress),
-                localDirectory.RemoteGrainDirectory.SchedulingContext).Ignore();
+                localDirectory.RemoteGrainDirectory).Ignore();
         }
 
         private void DestroyDuplicateActivations(Dictionary<SiloAddress, List<ActivationAddress>> duplicates)
@@ -491,7 +488,7 @@ namespace Orleans.Runtime.GrainDirectory
                 this.pendingOperations.Enqueue((name, action));
                 if (this.pendingOperations.Count <= 2)
                 {
-                    this.localDirectory.Scheduler.QueueTask(this.ExecutePendingOperations, this.localDirectory.RemoteGrainDirectory.SchedulingContext);
+                    this.localDirectory.Scheduler.QueueTask(this.ExecutePendingOperations, this.localDirectory.RemoteGrainDirectory);
                 }
             }
         }
